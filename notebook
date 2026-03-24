@@ -1,0 +1,541 @@
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import datetime as dt
+
+# Carregando os datasets brutos
+# Preciso dessas 3 tabelas para cruzar quem comprou (customers), quando (orders) e quanto (payments)
+df_orders = pd.read_csv('olist_orders_dataset.csv')
+df_payments = pd.read_csv('olist_order_payments_dataset.csv')
+df_customers = pd.read_csv('olist_customers_dataset.csv')
+
+# Passo 1: Notei que a tabela de pagamentos tem várias linhas para o mesmo pedido (parcelas). 
+# Vou somar tudo por order_id para ter o valor real gasto em cada compra.
+pagamentos_por_pedido = df_payments.groupby('order_id')['payment_value'].sum().reset_index()
+
+# Passo 2: Agora vou unir as tabelas. 
+# Uso o 'customer_unique_id' porque ele identifica o CPF/Pessoa, enquanto o 'customer_id' muda a cada pedido.
+df_merge = pd.merge(df_orders, pagamentos_por_pedido, on='order_id')
+df_rfm_base = pd.merge(df_merge, df_customers, on='customer_id')
+
+# Passo 3: Limpeza e Tipagem.
+# Preciso converter as datas, senão o Python entende como texto e não faz cálculos matemáticos.
+df_rfm_base['order_purchase_timestamp'] = pd.to_datetime(df_rfm_base['order_purchase_timestamp'])
+
+# --- Visualização de Portfólio ---
+# Antes de calcular o RFM, quero ver a distribuição de gastos dos clientes.
+plt.figure(figsize=(10, 5))
+sns.histplot(df_rfm_base[df_rfm_base['payment_value'] < 500]['payment_value'], bins=50, kde=True, color='teal')
+plt.title('Distribuição do Valor dos Pedidos (Até R$ 500)')
+plt.xlabel('Valor Pago (R$)')
+plt.ylabel('Quantidade de Pedidos')
+plt.show()
+
+# Percebi que a grande maioria dos pedidos se concentra abaixo de R$ 200,00. 
+# Isso me mostra que o Olist tem um ticket médio mais baixo, o que influencia na segmentação de "Valor".
+print(f"Total de registros para análise: {df_rfm_base.shape[0]}")
+display(df_rfm_base[['customer_unique_id', 'order_purchase_timestamp', 'payment_value']].head())
+```
+
+
+    
+![png](output_0_0.png)
+    
+
+
+    Total de registros para análise: 99440
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>customer_unique_id</th>
+      <th>order_purchase_timestamp</th>
+      <th>payment_value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>7c396fd4830fd04220f754e42b4e5bff</td>
+      <td>2017-10-02 10:56:33</td>
+      <td>38.71</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>af07308b275d755c9edb36a90c618231</td>
+      <td>2018-07-24 20:41:37</td>
+      <td>141.46</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>3a653a41f6f9fc3d2a113cf8398680e8</td>
+      <td>2018-08-08 08:38:49</td>
+      <td>179.12</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>7c142cf63193a1473d2e66489a9ae977</td>
+      <td>2017-11-18 19:28:06</td>
+      <td>72.20</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>72632f0f9dd73dfee390c9b22eb56dd6</td>
+      <td>2018-02-13 21:18:39</td>
+      <td>28.62</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
+
+```python
+# Definindo o ponto de referência para o cálculo de Recência
+snapshot_date = df_rfm_base['order_purchase_timestamp'].max() + dt.timedelta(days=1)
+
+# Agrupando por cliente único para calcular as métricas
+rfm = df_rfm_base.groupby('customer_unique_id').agg({
+    'order_purchase_timestamp': lambda x: (snapshot_date - x.max()).days, # Recência
+    'order_id': 'count',                                               # Frequência
+    'payment_value': 'sum'                                             # Valor (Monetário)
+})
+
+# Renomeando para ficar apresentável no portfólio
+rfm.columns = ['Recencia', 'Frequencia', 'Valor']
+
+# --- Insight de Frequência ---
+# Aqui notei algo crítico: Quantos clientes compram mais de uma vez?
+frequencia_counts = rfm['Frequencia'].value_counts().head(5)
+print("Distribuição de Frequência (Top 5):")
+print(frequencia_counts)
+
+# Percebi que o Olist tem um desafio enorme de retenção, já que a esmagadora maioria comprou apenas 1 vez. 
+# No meu portfólio, isso justifica o porquê de os "Clientes Fiéis" serem tão valiosos aqui.
+display(rfm.describe())
+```
+
+    Distribuição de Frequência (Top 5):
+    Frequencia
+    1    93098
+    2     2745
+    3      203
+    4       30
+    5        8
+    Name: count, dtype: int64
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Recencia</th>
+      <th>Frequencia</th>
+      <th>Valor</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>count</th>
+      <td>96095.000000</td>
+      <td>96095.000000</td>
+      <td>96095.000000</td>
+    </tr>
+    <tr>
+      <th>mean</th>
+      <td>288.730756</td>
+      <td>1.034809</td>
+      <td>166.594226</td>
+    </tr>
+    <tr>
+      <th>std</th>
+      <td>153.407846</td>
+      <td>0.214385</td>
+      <td>231.428912</td>
+    </tr>
+    <tr>
+      <th>min</th>
+      <td>1.000000</td>
+      <td>1.000000</td>
+      <td>0.000000</td>
+    </tr>
+    <tr>
+      <th>25%</th>
+      <td>164.000000</td>
+      <td>1.000000</td>
+      <td>63.120000</td>
+    </tr>
+    <tr>
+      <th>50%</th>
+      <td>269.000000</td>
+      <td>1.000000</td>
+      <td>108.000000</td>
+    </tr>
+    <tr>
+      <th>75%</th>
+      <td>398.000000</td>
+      <td>1.000000</td>
+      <td>183.530000</td>
+    </tr>
+    <tr>
+      <th>max</th>
+      <td>773.000000</td>
+      <td>17.000000</td>
+      <td>13664.080000</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
+
+```python
+# Criando as notas de 1 a 5 (Scores)
+
+# 1. Recência: Quanto MENOR o número de dias, MELHOR (Nota 5)
+# Usei o pd.qcut para dividir a base em 5 grupos iguais (quintis)
+rfm['R_Score'] = pd.qcut(rfm['Recencia'], 5, labels=[5, 4, 3, 2, 1])
+
+# 2. Valor: Quanto MAIOR o gasto, MELHOR (Nota 5)
+rfm['V_Score'] = pd.qcut(rfm['Valor'], 5, labels=[1, 2, 3, 4, 5])
+
+# 3. Frequência: Como 96% da base é '1', o qcut não funciona bem.
+# Criei uma função simples: se comprou 1 vez é nota 1, se comprou 2 é nota 3, mais que isso é 5.
+def nota_frequencia(x):
+    if x == 1: return 1
+    if x == 2: return 3
+    return 5
+
+rfm['F_Score'] = rfm['Frequencia'].apply(nota_frequencia)
+
+# Agora crio o RFM_Score final somando as notas ou apenas juntando os números
+rfm['RFM_Segment'] = rfm['R_Score'].astype(str) + rfm['F_Score'].astype(str) + rfm['V_Score'].astype(str)
+
+# Percebi que agora cada cliente tem um "código" (Ex: 515 é um cliente recente, comprou 1 vez, mas gastou muito)
+display(rfm[['Recencia', 'Frequencia', 'Valor', 'RFM_Segment']].head())
+```
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Recencia</th>
+      <th>Frequencia</th>
+      <th>Valor</th>
+      <th>RFM_Segment</th>
+    </tr>
+    <tr>
+      <th>customer_unique_id</th>
+      <th></th>
+      <th></th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0000366f3b9a7992bf8c76cfdf3221e2</th>
+      <td>161</td>
+      <td>1</td>
+      <td>141.90</td>
+      <td>414</td>
+    </tr>
+    <tr>
+      <th>0000b849f77a49e4a4ce2b2a4ca5be3f</th>
+      <td>164</td>
+      <td>1</td>
+      <td>27.19</td>
+      <td>411</td>
+    </tr>
+    <tr>
+      <th>0000f46a3911fa3c0805444483337064</th>
+      <td>586</td>
+      <td>1</td>
+      <td>86.22</td>
+      <td>112</td>
+    </tr>
+    <tr>
+      <th>0000f6ccb0745a6a4b88665a16c9f078</th>
+      <td>370</td>
+      <td>1</td>
+      <td>43.62</td>
+      <td>211</td>
+    </tr>
+    <tr>
+      <th>0004aac84e0df4da2b147fca70cf8255</th>
+      <td>337</td>
+      <td>1</td>
+      <td>196.89</td>
+      <td>214</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
+
+```python
+# Criando um dicionário para rotular os segmentos principais
+# Foquei nos comportamentos mais claros que notei na base
+segs_map = {
+    r'[4-5]5[4-5]': 'Campeões',
+    r'[4-5][1-5][4-5]': 'Clientes de Alto Valor',
+    r'[4-5][1-5][1-3]': 'Novos Clientes',
+    r'[3-4][1-5][1-5]': 'Clientes Fiéis',
+    r'[1-2]1[1-5]': 'Clientes em Risco',
+    r'[1-2][1-5][1-5]': 'Perdidos'
+}
+
+# Aplicando os nomes baseados no R_Score e F_Score
+# Notei que essa simplificação ajuda a criar ações de marketing mais diretas
+rfm['Segmento'] = rfm['R_Score'].astype(str) + rfm['F_Score'].astype(str)
+rfm['Segmento'] = rfm['Segmento'].replace(segs_map, regex=True)
+
+# Visualizando quantos clientes temos em cada "balde"
+plt.figure(figsize=(12, 6))
+sns.countplot(y='Segmento', data=rfm, palette='viridis', order=rfm['Segmento'].value_counts().index)
+plt.title('Distribuição dos Segmentos de Clientes')
+plt.show()
+
+# Percebi que o grupo de 'Novos Clientes' e 'Clientes em Risco' são gigantes.
+# Isso confirma que o Olist atrai muita gente, mas tem dificuldade em manter o relacionamento.
+```
+
+    /tmp/ipykernel_844/3282970064.py:19: FutureWarning: 
+    
+    Passing `palette` without assigning `hue` is deprecated and will be removed in v0.14.0. Assign the `y` variable to `hue` and set `legend=False` for the same effect.
+    
+      sns.countplot(y='Segmento', data=rfm, palette='viridis', order=rfm['Segmento'].value_counts().index)
+
+
+
+    
+![png](output_3_1.png)
+    
+
+
+
+```python
+# Refiz o mapeamento para garantir que cada código tenha um nome claro no gráfico
+# Foquei no R (Recência) e F (Frequência) para definir o comportamento
+def rotular_segmento(df):
+    r = int(df['R_Score'])
+    f = int(df['F_Score'])
+    
+    if r >= 4 and f >= 3:
+        return 'Campeões / Fiéis'
+    if r >= 4 and f == 1:
+        return 'Novos Clientes'
+    if r == 3:
+        return 'Potencialmente Fiéis'
+    if r <= 2 and f >= 3:
+        return 'Risco de Churn (Alto Valor)'
+    if r <= 2 and f == 1:
+        return 'Clientes Perdidos / Hibernando'
+    return 'Outros'
+
+rfm['Segmento_Nome'] = rfm.apply(rotular_segmento, axis=1)
+
+# Agora o gráfico vai falar a "língua do negócio"
+plt.figure(figsize=(12, 6))
+sns.countplot(y='Segmento_Nome', data=rfm, palette='viridis', 
+              order=rfm['Segmento_Nome'].value_counts().index)
+
+plt.title('Distribuição Estratégica dos Segmentos de Clientes')
+plt.xlabel('Quantidade de Clientes')
+plt.ylabel('Segmento')
+plt.show()
+
+# Percebi que agora consigo sugerir ações específicas para cada grupo:
+resumo_acoes = {
+    'Segmento': ['Campeões / Fiéis', 'Novos Clientes', 'Potencialmente Fiéis', 'Risco de Churn (Alto Valor)', 'Clientes Perdidos / Hibernando'],
+    'Ação Recomendada': [
+        'Programa de fidelidade e acesso antecipado a lançamentos.',
+        'E-mail de boas-vindas com cupom para a segunda compra.',
+        'Sugestão de produtos complementares (Cross-selling).',
+        'Oferta agressiva de desconto para reativação imediata.',
+        'Campanhas de reengajamento sazonais (Black Friday).'
+    ]
+}
+
+df_plano_acao = pd.DataFrame(resumo_acoes)
+display(df_plano_acao)
+```
+
+    /tmp/ipykernel_844/134563393.py:23: FutureWarning: 
+    
+    Passing `palette` without assigning `hue` is deprecated and will be removed in v0.14.0. Assign the `y` variable to `hue` and set `legend=False` for the same effect.
+    
+      sns.countplot(y='Segmento_Nome', data=rfm, palette='viridis',
+
+
+
+    
+![png](output_4_1.png)
+    
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Segmento</th>
+      <th>Ação Recomendada</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>Campeões / Fiéis</td>
+      <td>Programa de fidelidade e acesso antecipado a l...</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>Novos Clientes</td>
+      <td>E-mail de boas-vindas com cupom para a segunda...</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>Potencialmente Fiéis</td>
+      <td>Sugestão de produtos complementares (Cross-sel...</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>Risco de Churn (Alto Valor)</td>
+      <td>Oferta agressiva de desconto para reativação i...</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>Clientes Perdidos / Hibernando</td>
+      <td>Campanhas de reengajamento sazonais (Black Fri...</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
+
+```python
+# Carregando a base de reviews
+df_reviews = pd.read_csv('olist_order_reviews_dataset.csv')
+
+# Passo 1: Notei que muitos clientes não escrevem comentário, apenas dão nota.
+# Vou filtrar apenas quem escreveu algo para a gente ter o que analisar.
+df_comentarios = df_reviews.dropna(subset=['review_comment_message']).copy()
+
+# Passo 2: Criando uma lógica simples de sentimento baseada na nota (Score)
+# Percebi que notas 4 e 5 são geralmente elogios, enquanto 1 e 2 são críticas pesadas.
+def rotular_sentimento(nota):
+    if nota >= 4: return 'Positivo'
+    if nota == 3: return 'Neutro'
+    return 'Negativo'
+
+df_comentarios['Sentimento'] = df_comentarios['review_score'].apply(rotular_sentimento)
+
+# Passo 3: Vamos ver a distribuição desses sentimentos no portfólio
+plt.figure(figsize=(8, 5))
+sns.countplot(x='Sentimento', data=df_comentarios, palette='RdYlGn', order=['Negativo', 'Neutro', 'Positivo'])
+plt.title('Sentimento dos Comentários dos Clientes')
+plt.show()
+
+# Passo 4: Agora o "pulo do gato": O que os clientes negativos estão falando?
+# Vou pegar os comentários negativos e ver as palavras que mais aparecem.
+from collections import Counter
+
+# Fiz uma limpeza rápida para pegar as palavras mais comuns em comentários negativos
+palavras_negativas = " ".join(df_comentarios[df_comentarios['Sentimento'] == 'Negativo']['review_comment_message']).lower()
+top_palavras = Counter(palavras_negativas.split()).most_common(10)
+
+print("Palavras mais comuns em críticas:")
+for palavra, freq in top_palavras:
+    if len(palavra) > 3: # Filtrei palavras pequenas (artigos, preposições)
+        print(f"- {palavra}: {freq} vezes")
+
+# Percebi que palavras como "atraso", "entrega" e "produto" costumam dominar.
+```
+
+    /tmp/ipykernel_844/1803590748.py:19: FutureWarning: 
+    
+    Passing `palette` without assigning `hue` is deprecated and will be removed in v0.14.0. Assign the `x` variable to `hue` and set `legend=False` for the same effect.
+    
+      sns.countplot(x='Sentimento', data=df_comentarios, palette='RdYlGn', order=['Negativo', 'Neutro', 'Positivo'])
+
+
+
+    
+![png](output_5_1.png)
+    
+
+
+    Palavras mais comuns em críticas:
+    - produto: 5072 vezes
+    - recebi: 3053 vezes
+
+
+
+```python
+
+```
